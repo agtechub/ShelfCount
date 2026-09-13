@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ShelfCount — Grocery Scanner</title>
+<meta name="theme-color" content="#2F6B4F">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --paper:#FBF7EF;
+    --paper-dim:#F1EBDC;
+    --ink:#2B2118;
+    --ink-soft:#6B5F4F;
+    --green:#2F6B4F;
+    --green-dark:#204A37;
+    --amber:#E2A33D;
+    --red:#C0392B;
+    --line:#CDC3B2;
+    --white:#FFFFFF;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Archivo',sans-serif;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+  }
+  #app{
+    width:100%;
+    max-width:480px;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    background:var(--paper);
+    position:relative;
+    padding-bottom:78px;
+  }
+
+  /* Header */
+  header{
+    padding:22px 20px 16px;
+    border-bottom:2px solid var(--ink);
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+  }
+  header h1{
+    margin:0;
+    font-size:22px;
+    font-weight:800;
+    letter-spacing:-0.02em;
+  }
+  header h1 span{color:var(--green);}
+  header .tagline{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--ink-soft);
+    margin-top:2px;
+  }
+  #skuCount{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    background:var(--ink);
+    color:var(--paper);
+    padding:4px 9px;
+    border-radius:3px;
+    white-space:nowrap;
+  }
+
+  /* Views */
+  .view{display:none;flex:1;flex-direction:column;}
+  .view.active{display:flex;}
+
+  /* Scan view */
+  #scanStage{
+    position:relative;
+    margin:18px 20px 0;
+    border-radius:10px;
+    overflow:hidden;
+    background:#111;
+    aspect-ratio:3/4;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  #video{width:100%;height:100%;object-fit:cover;display:none;}
+  #scanPlaceholder{
+    color:#CFC9BC;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    text-align:center;
+    padding:0 30px;
+    line-height:1.6;
+  }
+  .reticle{
+    position:absolute;
+    top:50%;left:50%;
+    transform:translate(-50%,-50%);
+    width:70%;
+    aspect-ratio:2.2/1;
+    display:none;
+  }
+  .reticle.show{display:block;}
+  .corner{position:absolute;width:26px;height:26px;border:3px solid var(--amber);}
+  .corner.tl{top:0;left:0;border-right:none;border-bottom:none;}
+  .corner.tr{top:0;right:0;border-left:none;border-bottom:none;}
+  .corner.bl{bottom:0;left:0;border-right:none;border-top:none;}
+  .corner.br{bottom:0;right:0;border-left:none;border-top:none;}
+  .scanline{
+    position:absolute;left:4%;right:4%;top:0;
+    height:2px;background:var(--amber);
+    box-shadow:0 0 8px var(--amber);
+    animation:sweep 1.8s linear infinite;
+  }
+  @keyframes sweep{
+    0%{top:6%;} 50%{top:94%;} 100%{top:6%;}
+  }
+  #camStatus{
+    position:absolute;bottom:10px;left:0;right:0;
+    text-align:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:#F1EBDC;
+    opacity:.85;
+  }
+
+  .btnRow{padding:16px 20px 6px;display:flex;gap:10px;}
+  button{
+    font-family:'Archivo',sans-serif;
+    font-weight:700;
+    border:none;
+    cursor:pointer;
+  }
+  .btn-primary{
+    flex:1;
+    background:var(--green);
+    color:var(--white);
+    padding:14px 16px;
+    border-radius:8px;
+    font-size:15px;
+  }
+  .btn-primary:active{background:var(--green-dark);}
+  .btn-secondary{
+    background:transparent;
+    color:var(--ink);
+    border:2px solid var(--ink);
+    padding:12px 16px;
+    border-radius:8px;
+    font-size:14px;
+  }
+  .btn-stop{background:var(--red);}
+
+  .hint{
+    padding:10px 20px 0;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+    text-align:center;
+  }
+
+  /* Manual add link */
+  .manualLink{
+    text-align:center;
+    margin:14px 20px 0;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    color:var(--green-dark);
+    text-decoration:underline;
+    cursor:pointer;
+  }
+
+  /* Recent scans mini list on scan view */
+  #recentWrap{margin:20px 20px 0;flex:1;}
+  #recentWrap h2{
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    color:var(--ink-soft);
+    border-bottom:1px dashed var(--line);
+    padding-bottom:6px;
+    margin:0 0 6px;
+    font-weight:700;
+  }
+  .recentItem{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:9px 0;
+    border-bottom:1px dotted var(--line);
+    font-size:14px;
+  }
+  .recentItem .name{font-weight:600;}
+  .recentItem .meta{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;color:var(--ink-soft);
+  }
+  .recentItem .qty{
+    font-family:'IBM Plex Mono',monospace;
+    background:var(--paper-dim);
+    padding:2px 8px;border-radius:4px;font-size:13px;font-weight:600;
+  }
+  .emptyNote{
+    color:var(--ink-soft);
+    font-size:13px;
+    font-family:'IBM Plex Mono',monospace;
+    padding:14px 0;
+    text-align:center;
+  }
+
+  /* Report view */
+  #reportView{padding:20px;}
+  #reportView h2{font-size:19px;margin:0 0 2px;font-weight:800;}
+  #reportSub{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;color:var(--ink-soft);
+    margin-bottom:14px;
+  }
+  .statGrid{display:flex;gap:10px;margin-bottom:16px;}
+  .statBox{
+    flex:1;background:var(--white);
+    border:1.5px solid var(--ink);
+    border-radius:8px;
+    padding:10px 12px;
+  }
+  .statBox .num{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:20px;font-weight:600;color:var(--green-dark);
+  }
+  .statBox .lbl{font-size:10.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+
+  .searchBox{
+    width:100%;padding:10px 12px;
+    border:1.5px solid var(--line);
+    border-radius:7px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    background:var(--white);
+    margin-bottom:12px;
+  }
+
+  .itemRow{
+    background:var(--white);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:11px 13px;
+    margin-bottom:8px;
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .itemRow .left{min-width:0;}
+  .itemRow .iname{font-weight:700;font-size:14.5px;}
+  .itemRow .ibrand{font-size:12px;color:var(--ink-soft);margin-top:1px;}
+  .itemRow .ibarcode{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;color:var(--ink-soft);
+    margin-top:4px;
+    word-break:break-all;
+  }
+  .itemRow .right{
+    text-align:right;
+    display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;
+  }
+  .stepper{display:flex;align-items:center;gap:6px;}
+  .stepper button{
+    width:24px;height:24px;border-radius:5px;
+    background:var(--paper-dim);color:var(--ink);
+    font-size:14px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .stepper .qtyNum{
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:600;min-width:20px;text-align:center;font-size:13.5px;
+  }
+  .delBtn{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;color:var(--red);
+    background:none;text-decoration:underline;padding:0;
+  }
+
+  .exportRow{display:flex;gap:10px;margin-top:16px;}
+
+  /* Bottom tab bar */
+  #tabbar{
+    position:fixed;bottom:0;left:50%;transform:translateX(-50%);
+    width:100%;max-width:480px;
+    background:var(--ink);
+    display:flex;
+    border-top:2px solid var(--ink);
+  }
+  .tabBtn{
+    flex:1;background:none;color:#C9BFA9;
+    padding:12px 6px 10px;
+    font-family:'Archivo',sans-serif;
+    font-size:12px;font-weight:700;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+  }
+  .tabBtn svg{width:20px;height:20px;}
+  .tabBtn.active{color:var(--amber);}
+
+  /* Modal */
+  #modalOverlay{
+    position:fixed;inset:0;background:rgba(20,16,10,.55);
+    display:none;align-items:flex-end;justify-content:center;
+    z-index:50;
+  }
+  #modalOverlay.show{display:flex;}
+  #modalCard{
+    width:100%;max-width:480px;
+    background:var(--paper);
+    border-radius:16px 16px 0 0;
+    padding:20px 20px 24px;
+    max-height:88vh;overflow-y:auto;
+  }
+  #modalCard h3{margin:0 0 3px;font-size:17px;font-weight:800;}
+  #modalCard .modalSub{
+    font-family:'IBM Plex Mono',monospace;font-size:11.5px;
+    color:var(--ink-soft);margin-bottom:16px;word-break:break-all;
+  }
+  .field{margin-bottom:12px;}
+  .field label{
+    display:block;font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;color:var(--ink-soft);margin-bottom:4px;font-weight:700;
+  }
+  .field input, .field select{
+    width:100%;padding:11px 12px;
+    border:1.5px solid var(--line);border-radius:7px;
+    font-family:'Archivo',sans-serif;font-size:14.5px;
+    background:var(--white);color:var(--ink);
+  }
+  .fieldRow{display:flex;gap:10px;}
+  .fieldRow .field{flex:1;}
+  .modalBtnRow{display:flex;gap:10px;margin-top:6px;}
+
+  .toast{
+    position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+    background:var(--ink);color:var(--paper);
+    padding:10px 18px;border-radius:20px;
+    font-size:13px;font-family:'IBM Plex Mono',monospace;
+    z-index:60;opacity:0;transition:opacity .25s;pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+
+  ::-webkit-scrollbar{display:none;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div>
+      <h1>Shelf<span>Count</span></h1>
+      <div class="tagline">// grocery scan &amp; inventory</div>
+    </div>
+    <div id="skuCount">0 SKUs</div>
+  </header>
+
+  <!-- SCAN VIEW -->
+  <section class="view active" id="scanView">
+    <div id="scanStage">
+      <video id="video" playsinline autoplay muted></video>
+      <div id="scanPlaceholder">CAMERA OFF<br>Tap "Start Scanning" to begin</div>
+      <div class="reticle" id="reticle">
+        <div class="corner tl"></div><div class="corner tr"></div>
+        <div class="corner bl"></div><div class="corner br"></div>
+        <div class="scanline"></div>
+      </div>
+      <div id="camStatus" style="display:none;">Point camera at a barcode</div>
+    </div>
+
+    <div class="btnRow">
+      <button class="btn-primary" id="toggleScanBtn">Start Scanning</button>
+    </div>
+    <div class="hint" id="supportHint"></div>
+    <div class="manualLink" id="manualAddLink">+ Add item manually (no barcode)</div>
+
+    <div id="recentWrap">
+      <h2>Recently Scanned</h2>
+      <div id="recentList"><div class="emptyNote">Nothing scanned yet — items you add will show up here.</div></div>
+    </div>
+  </section>
+
+  <!-- REPORT VIEW -->
+  <section class="view" id="reportView">
+    <h2>Inventory Report</h2>
+    <div id="reportSub">Generated just now</div>
+
+    <div class="statGrid">
+      <div class="statBox"><div class="num" id="statSkus">0</div><div class="lbl">SKUs</div></div>
+      <div class="statBox"><div class="num" id="statUnits">0</div><div class="lbl">Total Units</div></div>
+      <div class="statBox"><div class="num" id="statValue">—</div><div class="lbl">Total Value</div></div>
+    </div>
+
+    <input type="text" class="searchBox" id="searchBox" placeholder="Search items or barcode…">
+
+    <div id="reportList"></div>
+
+    <div class="exportRow">
+      <button class="btn-primary" id="exportBtn">Download Excel Report</button>
+      <button class="btn-secondary" id="clearAllBtn">Clear All</button>
+    </div>
+  </section>
+
+  <div id="tabbar">
+    <button class="tabBtn active" id="tabScan">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/></svg>
+      Scan
+    </button>
+    <button class="tabBtn" id="tabReport">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5a1 1 0 0 1 1-1h10l5 5v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M9 13h6M9 17h6M9 9h2"/></svg>
+      View Items
+    </button>
+  </div>
+</div>
+
+<!-- Confirm / Add Modal -->
+<div id="modalOverlay">
+  <div id="modalCard">
+    <h3 id="modalTitle">Confirm Item</h3>
+    <div class="modalSub" id="modalBarcode"></div>
+
+    <div class="field">
+      <label>Item Name</label>
+      <input type="text" id="fName" placeholder="e.g. Basmati Rice 1kg">
+    </div>
+    <div class="fieldRow">
+      <div class="field">
+        <label>Brand</label>
+        <input type="text" id="fBrand" placeholder="Unknown">
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <input type="text" id="fCategory" placeholder="e.g. Grains">
+      </div>
+    </div>
+    <div class="fieldRow">
+      <div class="field">
+        <label>Quantity</label>
+        <input type="number" id="fQty" value="1" min="1">
+      </div>
+      <div class="field">
+        <label>Price (optional)</label>
+        <input type="number" id="fPrice" placeholder="0.00" step="0.01" min="0">
+      </div>
+    </div>
+    <div class="field">
+      <label>Location</label>
+      <input type="text" id="fLocation" placeholder="e.g. Aisle 3, Shelf B">
+    </div>
+
+    <div class="modalBtnRow">
+      <button class="btn-secondary" id="modalCancelBtn" style="flex:1;">Cancel</button>
+      <button class="btn-primary" id="modalSaveBtn" style="flex:1;">Add to Inventory</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+
+  /* ---------- Storage abstraction ----------
+     Uses Claude's window.storage when available (persists across sessions
+     inside a Claude.ai artifact). Falls back to an in-memory array when
+     running as a plain standalone page (e.g. hosted on your own site) —
+     see README.txt for how to wire up permanent on-device storage there. */
+  var memoryItems = [];
+  var STORAGE_KEY = 'shelfcount-items';
+  var hasClaudeStorage = (typeof window.storage !== 'undefined');
+
+  async function loadItems(){
+    if(hasClaudeStorage){
+      try{
+        var res = await window.storage.get(STORAGE_KEY, false);
+        return res && res.value ? JSON.parse(res.value) : [];
+      }catch(e){ return []; }
+    }
+    return memoryItems;
+  }
+  async function saveItems(items){
+    if(hasClaudeStorage){
+      try{ await window.storage.set(STORAGE_KEY, JSON.stringify(items), false); }
+      catch(e){ console.error('storage save failed', e); }
+    } else {
+      memoryItems = items;
+    }
+  }
+
+  /* ---------- State ---------- */
+  var items = [];
+  var stream = null;
+  var scanning = false;
+  var detector = null;
+  var lastCode = null;
+  var lastCodeTime = 0;
+  var pendingLookup = null;
+
+  var video = document.getElementById('video');
+  var scanPlaceholder = document.getElementById('scanPlaceholder');
+  var reticle = document.getElementById('reticle');
+  var camStatus = document.getElementById('camStatus');
+  var toggleScanBtn = document.getElementById('toggleScanBtn');
+  var supportHint = document.getElementById('supportHint');
+
+  /* ---------- Barcode detector support check ---------- */
+  var barcodeSupported = 'BarcodeDetector' in window;
+  if(barcodeSupported){
+    try{
+      detector = new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','qr_code']});
+    }catch(e){ barcodeSupported = false; }
+  }
+  if(!barcodeSupported){
+    supportHint.innerHTML = 'Live barcode scanning needs Chrome on Android.<br>Use "Add item manually" below instead.';
+    toggleScanBtn.disabled = true;
+    toggleScanBtn.style.opacity = .5;
+  }
+
+  function showToast(msg){
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function(){ t.classList.remove('show'); }, 1800);
+  }
+
+  /* ---------- Camera control ---------- */
+  async function startScanning(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:960} }
+      });
+      video.srcObject = stream;
+      video.style.display = 'block';
+      scanPlaceholder.style.display = 'none';
+      reticle.classList.add('show');
+      camStatus.style.display = 'block';
+      toggleScanBtn.textContent = 'Stop Scanning';
+      toggleScanBtn.classList.add('btn-stop');
+      scanning = true;
+      requestAnimationFrame(scanLoop);
+    }catch(err){
+      showToast('Camera access denied or unavailable');
+    }
+  }
+
+  function stopScanning(){
+    scanning = false;
+    if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    video.style.display = 'none';
+    scanPlaceholder.style.display = 'block';
+    reticle.classList.remove('show');
+    camStatus.style.display = 'none';
+    toggleScanBtn.textContent = 'Start Scanning';
+    toggleScanBtn.classList.remove('btn-stop');
+  }
+
+  toggleScanBtn.addEventListener('click', function(){
+    if(scanning) stopScanning(); else startScanning();
+  });
+
+  var lastDetectAttempt = 0;
+  async function scanLoop(){
+    if(!scanning) return;
+    var now = Date.now();
+    if(now - lastDetectAttempt > 350 && video.readyState >= 2){
+      lastDetectAttempt = now;
+      try{
+        var codes = await detector.detect(video);
+        if(codes && codes.length){
+          handleDetected(codes[0].rawValue);
+        }
+      }catch(e){ /* ignore transient detection errors */ }
+    }
+    requestAnimationFrame(scanLoop);
+  }
+
+  function handleDetected(code){
+    var now = Date.now();
+    if(code === lastCode && (now - lastCodeTime) < 4000) return; // debounce same code
+    lastCode = code;
+    lastCodeTime = now;
+    if(navigator.vibrate) navigator.vibrate(80);
+    openModalForBarcode(code);
+  }
+
+  /* ---------- Product lookup (Open Food Facts — free, no key, no license fee) ---------- */
+  async function lookupBarcode(code){
+    try{
+      var resp = await fetch('https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(code) + '.json');
+      var data = await resp.json();
+      if(data && data.status === 1 && data.product){
+        return {
+          name: data.product.product_name || '',
+          brand: data.product.brands || '',
+          category: (data.product.categories || '').split(',')[0] || ''
+        };
+      }
+    }catch(e){ /* offline or blocked — fall back to manual entry */ }
+    return null;
+  }
+
+  /* ---------- Modal ---------- */
+  var modalOverlay = document.getElementById('modalOverlay');
+  var modalTitle = document.getElementById('modalTitle');
+  var modalBarcode = document.getElementById('modalBarcode');
+  var fName = document.getElementById('fName');
+  var fBrand = document.getElementById('fBrand');
+  var fCategory = document.getElementById('fCategory');
+  var fQty = document.getElementById('fQty');
+  var fPrice = document.getElementById('fPrice');
+  var fLocation = document.getElementById('fLocation');
+  var currentBarcode = null;
+
+  async function openModalForBarcode(code){
+    currentBarcode = code;
+    modalTitle.textContent = 'Confirm Item';
+    modalBarcode.textContent = 'Barcode: ' + code;
+    fName.value = ''; fBrand.value=''; fCategory.value=''; fQty.value=1; fPrice.value=''; fLocation.value='';
+    modalOverlay.classList.add('show');
+    fName.placeholder = 'Looking up product…';
+
+    var existing = items.find(function(i){ return i.barcode === code; });
+    if(existing){
+      fName.value = existing.name;
+      fBrand.value = existing.brand;
+      fCategory.value = existing.category;
+      fQty.value = 1;
+      fLocation.value = existing.location || '';
+      fName.placeholder = 'e.g. Basmati Rice 1kg';
+      return;
+    }
+
+    var info = await lookupBarcode(code);
+    if(info){
+      fName.value = info.name;
+      fBrand.value = info.brand;
+      fCategory.value = info.category;
+    }
+    fName.placeholder = 'e.g. Basmati Rice 1kg';
+  }
+
+  function openModalManual(){
+    currentBarcode = 'MANUAL-' + Date.now();
+    modalTitle.textContent = 'Add Item Manually';
+    modalBarcode.textContent = 'No barcode — entered by hand';
+    fName.value=''; fBrand.value=''; fCategory.value=''; fQty.value=1; fPrice.value=''; fLocation.value='';
+    fName.placeholder = 'e.g. Basmati Rice 1kg';
+    modalOverlay.classList.add('show');
+  }
+
+  document.getElementById('manualAddLink').addEventListener('click', openModalManual);
+  document.getElementById('modalCancelBtn').addEventListener('click', function(){
+    modalOverlay.classList.remove('show');
+  });
+
+  document.getElementById('modalSaveBtn').addEventListener('click', async function(){
+    var name = fName.value.trim();
+    if(!name){ showToast('Please enter an item name'); return; }
+    var qty = parseInt(fQty.value,10) || 1;
+
+    var existingIdx = items.findIndex(function(i){ return i.barcode === currentBarcode; });
+    if(existingIdx > -1){
+      items[existingIdx].quantity += qty;
+      items[existingIdx].lastScanned = new Date().toISOString();
+    } else {
+      items.push({
+        id: 'itm_' + Date.now(),
+        barcode: currentBarcode,
+        name: name,
+        brand: fBrand.value.trim() || 'Unknown',
+        category: fCategory.value.trim() || 'Unknown',
+        quantity: qty,
+        price: fPrice.value ? parseFloat(fPrice.value) : null,
+        location: fLocation.value.trim() || 'Unknown',
+        condition: 'In Stock',
+        dateAdded: new Date().toISOString(),
+        lastScanned: new Date().toISOString()
+      });
+    }
+    await saveItems(items);
+    modalOverlay.classList.remove('show');
+    renderRecent();
+    updateSkuCount();
+    showToast('Added "' + name + '" to inventory');
+  });
+
+  /* ---------- Rendering: Scan view recent list ---------- */
+  function renderRecent(){
+    var wrap = document.getElementById('recentList');
+    if(!items.length){
+      wrap.innerHTML = '<div class="emptyNote">Nothing scanned yet — items you add will show up here.</div>';
+      return;
+    }
+    var sorted = items.slice().sort(function(a,b){
+      return new Date(b.lastScanned) - new Date(a.lastScanned);
+    }).slice(0,6);
+    wrap.innerHTML = sorted.map(function(it){
+      return '<div class="recentItem">' +
+        '<div><div class="name">'+escapeHtml(it.name)+'</div>' +
+        '<div class="meta">'+escapeHtml(it.brand)+' · '+escapeHtml(it.category)+'</div></div>' +
+        '<div class="qty">×'+it.quantity+'</div></div>';
+    }).join('');
+  }
+
+  function updateSkuCount(){
+    document.getElementById('skuCount').textContent = items.length + ' SKU' + (items.length===1?'':'s');
+  }
+
+  function escapeHtml(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  /* ---------- Report view ---------- */
+  var searchBox = document.getElementById('searchBox');
+  searchBox.addEventListener('input', renderReport);
+
+  function renderReport(){
+    document.getElementById('reportSub').textContent =
+      'Generated ' + new Date().toLocaleString();
+
+    var q = searchBox.value.trim().toLowerCase();
+    var filtered = items.filter(function(it){
+      if(!q) return true;
+      return (it.name+it.brand+it.barcode+it.category).toLowerCase().indexOf(q) > -1;
+    });
+
+    document.getElementById('statSkus').textContent = items.length;
+    var totalUnits = items.reduce(function(s,i){ return s + i.quantity; },0);
+    document.getElementById('statUnits').textContent = totalUnits;
+    var hasPrice = items.some(function(i){ return i.price!=null; });
+    var totalValue = items.reduce(function(s,i){ return s + (i.price||0)*i.quantity; },0);
+    document.getElementById('statValue').textContent = hasPrice ? ('$'+totalValue.toFixed(2)) : '—';
+
+    var listEl = document.getElementById('reportList');
+    if(!filtered.length){
+      listEl.innerHTML = '<div class="emptyNote">No items match.</div>';
+      return;
+    }
+    listEl.innerHTML = filtered.map(function(it){
+      return '<div class="itemRow" data-id="'+it.id+'">' +
+        '<div class="left">' +
+          '<div class="iname">'+escapeHtml(it.name)+'</div>' +
+          '<div class="ibrand">'+escapeHtml(it.brand)+' · '+escapeHtml(it.category)+' · '+escapeHtml(it.location)+'</div>' +
+          '<div class="ibarcode">'+escapeHtml(it.barcode)+'</div>' +
+        '</div>' +
+        '<div class="right">' +
+          '<div class="stepper">' +
+            '<button data-act="dec" data-id="'+it.id+'">–</button>' +
+            '<div class="qtyNum">'+it.quantity+'</div>' +
+            '<button data-act="inc" data-id="'+it.id+'">+</button>' +
+          '</div>' +
+          '<button class="delBtn" data-act="del" data-id="'+it.id+'">Remove</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  document.getElementById('reportList').addEventListener('click', async function(e){
+    var btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+    var id = btn.getAttribute('data-id');
+    var idx = items.findIndex(function(i){ return i.id === id; });
+    if(idx === -1) return;
+    var act = btn.getAttribute('data-act');
+    if(act === 'inc') items[idx].quantity += 1;
+    if(act === 'dec') items[idx].quantity = Math.max(1, items[idx].quantity - 1);
+    if(act === 'del') items.splice(idx,1);
+    await saveItems(items);
+    renderReport();
+    renderRecent();
+    updateSkuCount();
+  });
+
+  document.getElementById('clearAllBtn').addEventListener('click', async function(){
+    if(!items.length) return;
+    if(!confirm('Remove all ' + items.length + ' items from the inventory list?')) return;
+    items = [];
+    await saveItems(items);
+    renderReport();
+    renderRecent();
+    updateSkuCount();
+    showToast('Inventory cleared');
+  });
+
+  /* ---------- Export to Excel ---------- */
+  document.getElementById('exportBtn').addEventListener('click', function(){
+    if(!items.length){ showToast('No items to export yet'); return; }
+    var rows = items.map(function(it, idx){
+      return {
+        'Item Number': idx+1,
+        'Category': it.category,
+        'Item Name': it.name,
+        'Brand': it.brand,
+        'Barcode': it.barcode,
+        'Quantity': it.quantity,
+        'Price': it.price!=null ? it.price : '',
+        'Condition': it.condition,
+        'Location': it.location,
+        'Date Added': new Date(it.dateAdded).toLocaleString(),
+        'Last Scanned': new Date(it.lastScanned).toLocaleString()
+      };
+    });
+    var ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:6},{wch:16},{wch:28},{wch:16},{wch:16},{wch:9},{wch:9},{wch:12},{wch:20},{wch:20},{wch:20}];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
+    var fname = 'ShelfCount_Inventory_' + new Date().toISOString().slice(0,10) + '.xlsx';
+    XLSX.writeFile(wb, fname);
+    showToast('Excel report downloaded');
+  });
+
+  /* ---------- Tabs ---------- */
+  var scanView = document.getElementById('scanView');
+  var reportView = document.getElementById('reportView');
+  var tabScan = document.getElementById('tabScan');
+  var tabReport = document.getElementById('tabReport');
+
+  tabScan.addEventListener('click', function(){
+    scanView.classList.add('active'); reportView.classList.remove('active');
+    tabScan.classList.add('active'); tabReport.classList.remove('active');
+  });
+  tabReport.addEventListener('click', function(){
+    stopScanning();
+    reportView.classList.add('active'); scanView.classList.remove('active');
+    tabReport.classList.add('active'); tabScan.classList.remove('active');
+    renderReport();
+  });
+
+  /* ---------- Init ---------- */
+  (async function init(){
+    items = await loadItems();
+    renderRecent();
+    updateSkuCount();
+  })();
+
+  /* Register service worker for offline installability if hosted standalone */
+  if('serviceWorker' in navigator && location.protocol !== 'blob:'){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+
+})();
+</script>
+</body>
+</html>
