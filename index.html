@@ -11,6 +11,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- ZXing: free, open-source (MIT license) barcode reader used as a fallback
+     on browsers/platforms (e.g. Windows and Linux desktops) where the
+     browser's native BarcodeDetector API is not available. -->
+<script src="https://unpkg.com/@zxing/browser@latest"></script>
 <style>
   :root{
     --paper:#FBF7EF;
@@ -510,15 +514,38 @@
   var toggleScanBtn = document.getElementById('toggleScanBtn');
   var supportHint = document.getElementById('supportHint');
 
-  /* ---------- Barcode detector support check ---------- */
-  var barcodeSupported = 'BarcodeDetector' in window;
-  if(barcodeSupported){
+  /* ---------- Barcode detector support check ----------
+     1) Prefer the browser's native BarcodeDetector (fastest, zero download —
+        available on Chrome/Edge on Android and macOS today).
+     2) If that's missing (e.g. Windows/Linux desktop Chrome, which never
+        got native support from the OS), fall back to ZXing — a free,
+        open-source (MIT license) pure-JavaScript barcode reader — so
+        scanning still works there.
+     3) If neither is available (offline load failure, unsupported
+        browser), scanning is disabled and manual entry still works. */
+  var scanMode = 'none'; // 'native' | 'zxing' | 'none'
+  var zxingReader = null;
+
+  var nativeSupported = 'BarcodeDetector' in window;
+  if(nativeSupported){
     try{
       detector = new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','qr_code']});
-    }catch(e){ barcodeSupported = false; }
+      scanMode = 'native';
+    }catch(e){ nativeSupported = false; }
   }
-  if(!barcodeSupported){
-    supportHint.innerHTML = 'Live barcode scanning needs Chrome on Android.<br>Use "Add item manually" below instead.';
+  if(scanMode === 'none' && typeof ZXingBrowser !== 'undefined'){
+    try{
+      zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+      scanMode = 'zxing';
+    }catch(e){ /* fall through to disabled state */ }
+  }
+
+  if(scanMode === 'native'){
+    supportHint.textContent = '';
+  } else if(scanMode === 'zxing'){
+    supportHint.textContent = 'Using the built-in fallback scanner for this browser/device.';
+  } else {
+    supportHint.innerHTML = 'Live barcode scanning isn\'t available in this browser (and the offline fallback couldn\'t load).<br>Use "Add item manually" below instead.';
     toggleScanBtn.disabled = true;
     toggleScanBtn.style.opacity = .5;
   }
@@ -531,19 +558,41 @@
   }
 
   /* ---------- Camera control ---------- */
+  function showCameraUI(){
+    video.style.display = 'block';
+    scanPlaceholder.style.display = 'none';
+    reticle.classList.add('show');
+    camStatus.style.display = 'block';
+    toggleScanBtn.textContent = 'Stop Scanning';
+    toggleScanBtn.classList.add('btn-stop');
+    scanning = true;
+  }
+
   async function startScanning(){
+    if(scanMode === 'zxing'){
+      try{
+        showCameraUI();
+        // ZXing owns the getUserMedia call for this device/video pairing
+        // and keeps calling back with results (or a "not found" error,
+        // which is normal for every frame with no barcode in view).
+        zxingReader.decodeFromVideoDevice(undefined, video, function(result, err){
+          if(!scanning) return;
+          if(result){ handleDetected(result.getText()); }
+        });
+      }catch(err){
+        showToast('Camera access denied or unavailable');
+        stopScanning();
+      }
+      return;
+    }
+
+    // native mode
     try{
       stream = await navigator.mediaDevices.getUserMedia({
         video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:960} }
       });
       video.srcObject = stream;
-      video.style.display = 'block';
-      scanPlaceholder.style.display = 'none';
-      reticle.classList.add('show');
-      camStatus.style.display = 'block';
-      toggleScanBtn.textContent = 'Stop Scanning';
-      toggleScanBtn.classList.add('btn-stop');
-      scanning = true;
+      showCameraUI();
       requestAnimationFrame(scanLoop);
     }catch(err){
       showToast('Camera access denied or unavailable');
@@ -552,7 +601,11 @@
 
   function stopScanning(){
     scanning = false;
+    if(scanMode === 'zxing' && zxingReader){
+      try{ zxingReader.reset(); }catch(e){}
+    }
     if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    video.srcObject = null;
     video.style.display = 'none';
     scanPlaceholder.style.display = 'block';
     reticle.classList.remove('show');
@@ -567,7 +620,7 @@
 
   var lastDetectAttempt = 0;
   async function scanLoop(){
-    if(!scanning) return;
+    if(!scanning || scanMode !== 'native') return;
     var now = Date.now();
     if(now - lastDetectAttempt > 350 && video.readyState >= 2){
       lastDetectAttempt = now;
